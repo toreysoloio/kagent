@@ -12,8 +12,8 @@ import (
 	"github.com/kagent-dev/kagent/go/core/internal/service/serviceerrors"
 	"github.com/kagent-dev/kagent/go/core/internal/substrate"
 	"github.com/kagent-dev/kagent/go/core/pkg/auth"
+	"github.com/kagent-dev/kagent/go/pkg/logging"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
-	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 /*
@@ -116,7 +116,7 @@ ate-api fails all three, and reporting the last would name the worker walk for a
 outage the template listing already found.
 */
 func (summary *SubstrateSummary) recordATEError(ctx context.Context, err error) {
-	ctrllog.FromContext(ctx).Error(err, "summarise ate-api state")
+	logging.FromContext(ctx).ErrorContext(ctx, "failed to summarise ate-api state", "error", err)
 	if summary.ATEAPIError == "" {
 		summary.ATEAPIError = err.Error()
 	}
@@ -282,7 +282,7 @@ func (s *Service) ListSubstrateActors(ctx context.Context, input SubstrateListIn
 	result.NextPageToken = next
 	if err != nil {
 		result.ATEAPIError = err.Error()
-		ctrllog.FromContext(ctx).Error(err, "list ate-api actors")
+		logging.FromContext(ctx).ErrorContext(ctx, "failed to list ate-api actors", "error", err)
 	}
 	return result, nil
 }
@@ -324,7 +324,7 @@ func (s *Service) ListSubstrateWorkers(ctx context.Context, input SubstrateListI
 	result.NextPageToken = next
 	if err != nil {
 		result.ATEAPIError = err.Error()
-		ctrllog.FromContext(ctx).Error(err, "list ate-api workers")
+		logging.FromContext(ctx).ErrorContext(ctx, "failed to list ate-api workers", "error", err)
 	}
 	return result, nil
 }

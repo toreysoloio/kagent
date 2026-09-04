@@ -140,7 +140,7 @@ func fakePage[T any](rows []T, ceiling int, requested int32, pageToken string) (
 }
 
 func TestCurrentUser(t *testing.T) {
-	service := system.NewService()
+	service := system.NewService(nil, nil, nil, nil, nil)
 	claims := map[string]any{"sub": "user-1", "groups": []any{"admins"}}
 	ctx := pkgAuth.AuthSessionTo(t.Context(), &authimpl.SimpleSession{P: pkgAuth.Principal{
 		User:   pkgAuth.User{ID: "user-1"},
@@ -171,7 +171,7 @@ func TestListNamespaces(t *testing.T) {
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "Zoo"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceActive}},
 			&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "alpha"}, Status: corev1.NamespaceStatus{Phase: corev1.NamespaceTerminating}},
 		).Build()
-		service := system.NewService(system.WithInventory(kubeClient, nil, nil, nil))
+		service := system.NewService(kubeClient, nil, nil, nil, nil)
 
 		result, err := service.ListNamespaces(t.Context())
 		require.NoError(t, err)
@@ -187,7 +187,7 @@ func TestListNamespaces(t *testing.T) {
 				return apierrors.NewForbidden(schema.GroupResource{Resource: "namespaces"}, "", nil)
 			},
 		}).Build()
-		service := system.NewService(system.WithInventory(kubeClient, []string{"team-b", "team-a"}, nil, nil))
+		service := system.NewService(kubeClient, []string{"team-b", "team-a"}, nil, nil, nil)
 
 		result, err := service.ListNamespaces(t.Context())
 		require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestGetSubstrateStatus(t *testing.T) {
 	ctx := pkgAuth.AuthSessionTo(t.Context(), &authimpl.SimpleSession{P: pkgAuth.Principal{User: pkgAuth.User{ID: "user"}}})
 
 	t.Run("disabled does not read Kubernetes", func(t *testing.T) {
-		service := system.NewService(system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, nil))
+		service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, nil, nil)
 		result, err := service.GetSubstrateStatus(ctx, "team")
 		require.NoError(t, err)
 		assert.False(t, result.Enabled)
@@ -241,10 +241,7 @@ func TestGetSubstrateStatus(t *testing.T) {
 		revisions := &fakeRuntimeRevisionStore{harnesses: []dbpkg.ActorTemplateHarness{{
 			Atespace: "team", Name: "template", UID: "template-uid", HarnessName: "kagent",
 		}}}
-		service := system.NewService(
-			system.WithInventory(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient),
-			system.WithRuntimeRevisions(revisions),
-		)
+		service := system.NewService(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient, revisions)
 
 		result, err := service.GetSubstrateStatus(ctx, "team")
 		require.NoError(t, err)
@@ -266,11 +263,11 @@ func TestGetSubstrateStatus(t *testing.T) {
 	})
 
 	t.Run("validates and authorizes", func(t *testing.T) {
-		service := system.NewService(system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, nil))
+		service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, nil, nil)
 		_, err := service.GetSubstrateStatus(ctx, "INVALID_NAMESPACE")
 		assert.True(t, serviceerrors.IsCode(err, serviceerrors.CodeInvalidArgument), err)
 
-		service = system.NewService(system.WithInventory(nil, nil, systemDenyAuthorizer{}, nil))
+		service = system.NewService(nil, nil, systemDenyAuthorizer{}, nil, nil)
 		_, err = service.GetSubstrateStatus(ctx, "")
 		assert.True(t, serviceerrors.IsCode(err, serviceerrors.CodePermissionDenied), err)
 	})
@@ -300,10 +297,7 @@ func TestListSubstrateActors(t *testing.T) {
 	// untyped nil: a typed nil pointer in an interface is not nil, and the test would
 	// be asserting against a fake it had accidentally kept.
 	newService := func(client system.ATEClient) *system.Service {
-		return system.NewService(
-			system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, client),
-			system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-		)
+		return system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, client, &fakeRuntimeRevisionStore{})
 	}
 
 	t.Run("answers with one page and the token for the next", func(t *testing.T) {
@@ -382,7 +376,7 @@ func TestListSubstrateActors(t *testing.T) {
 		_, err := newService(&fakeATEClient{}).ListSubstrateActors(ctx, system.SubstrateListInput{Namespace: "INVALID_NAMESPACE"})
 		assert.True(t, serviceerrors.IsCode(err, serviceerrors.CodeInvalidArgument), err)
 
-		denied := system.NewService(system.WithInventory(nil, nil, systemDenyAuthorizer{}, &fakeATEClient{}))
+		denied := system.NewService(nil, nil, systemDenyAuthorizer{}, &fakeATEClient{}, nil)
 		_, err = denied.ListSubstrateActors(ctx, system.SubstrateListInput{})
 		assert.True(t, serviceerrors.IsCode(err, serviceerrors.CodePermissionDenied), err)
 	})
@@ -396,10 +390,7 @@ func TestListSubstrateWorkers(t *testing.T) {
 		{WorkerNamespace: "other", WorkerPool: "pool", WorkerPod: "worker-1"},
 		{WorkerNamespace: "team", WorkerPool: "pool", WorkerPod: "worker-2"},
 	}}
-	service := system.NewService(
-		system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, ateClient),
-		system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-	)
+	service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{})
 
 	page, err := service.ListSubstrateWorkers(ctx, system.SubstrateListInput{Namespace: "team", PageSize: 2})
 	require.NoError(t, err)
@@ -444,12 +435,9 @@ func TestGetSubstrateSummary(t *testing.T) {
 				{WorkerNamespace: "other", WorkerPool: "pool", WorkerPod: "worker-9"},
 			},
 		}
-		service := system.NewService(
-			system.WithInventory(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient),
-			system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{harnesses: []dbpkg.ActorTemplateHarness{{
-				Atespace: "team", Name: "template", UID: "template-uid", HarnessName: "kagent",
-			}}}),
-		)
+		service := system.NewService(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{harnesses: []dbpkg.ActorTemplateHarness{{
+			Atespace: "team", Name: "template", UID: "template-uid", HarnessName: "kagent",
+		}}})
 
 		result, err := service.GetSubstrateSummary(ctx, "team")
 		require.NoError(t, err)
@@ -472,10 +460,7 @@ func TestGetSubstrateSummary(t *testing.T) {
 	})
 
 	t.Run("an ate-api failure leaves the Kubernetes halves complete", func(t *testing.T) {
-		service := system.NewService(
-			system.WithInventory(kubeClient, nil, &authimpl.NoopAuthorizer{}, &fakeATEClient{err: errors.New("ate-api unreachable")}),
-			system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-		)
+		service := system.NewService(kubeClient, nil, &authimpl.NoopAuthorizer{}, &fakeATEClient{err: errors.New("ate-api unreachable")}, &fakeRuntimeRevisionStore{})
 
 		result, err := service.GetSubstrateSummary(ctx, "team")
 		require.NoError(t, err)
@@ -485,7 +470,7 @@ func TestGetSubstrateSummary(t *testing.T) {
 	})
 
 	t.Run("disabled substrate does not read Kubernetes", func(t *testing.T) {
-		service := system.NewService(system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, nil))
+		service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, nil, nil)
 		result, err := service.GetSubstrateSummary(ctx, "team")
 		require.NoError(t, err)
 		assert.False(t, result.Enabled)
@@ -508,10 +493,7 @@ func TestListSubstrateActorsKeepsRowsWhenAPageFailsMidway(t *testing.T) {
 			substrateActor("actor-2", "team", ateapipb.ActorState_ACTOR_STATE_RUNNING, "team", "worker-2"),
 		},
 	}
-	service := system.NewService(
-		system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, ateClient),
-		system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-	)
+	service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{})
 
 	page, err := service.ListSubstrateActors(ctx, system.SubstrateListInput{Namespace: "team", PageSize: 10})
 	require.NoError(t, err)
@@ -528,10 +510,7 @@ func TestListSubstrateActorsKeepsRowsWhenAPageFailsMidway(t *testing.T) {
 func TestListSubstrateActorsOffersNoNextPageWhenTheFirstReadFails(t *testing.T) {
 	ctx := pkgAuth.AuthSessionTo(t.Context(), &authimpl.SimpleSession{P: pkgAuth.Principal{User: pkgAuth.User{ID: "user"}}})
 	ateClient := &fakeATEClient{pageSize: 1, err: errors.New("ate-api unreachable")}
-	service := system.NewService(
-		system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, ateClient),
-		system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-	)
+	service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{})
 
 	page, err := service.ListSubstrateActors(ctx, system.SubstrateListInput{PageToken: "2", PageSize: 10})
 	require.NoError(t, err)
@@ -555,10 +534,7 @@ func TestListSubstrateActorsNeverOverfillsAPage(t *testing.T) {
 	// Three rows a page: the first page contributes one in-scope row, so a second read
 	// asking for the full three again would return four rows for a page of three.
 	ateClient := &fakeATEClient{pageSize: 3, actors: actors}
-	service := system.NewService(
-		system.WithInventory(nil, nil, &authimpl.NoopAuthorizer{}, ateClient),
-		system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-	)
+	service := system.NewService(nil, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{})
 
 	page, err := service.ListSubstrateActors(ctx, system.SubstrateListInput{Namespace: "team", PageSize: 3})
 	require.NoError(t, err)
@@ -595,10 +571,7 @@ func TestGetSubstrateSummaryReadsAreIndependent(t *testing.T) {
 		ateClient := &failingTemplatesATEClient{
 			fakeATEClient: fakeATEClient{actors: actors, workers: workers},
 		}
-		service := system.NewService(
-			system.WithInventory(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient),
-			system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{}),
-		)
+		service := system.NewService(kubeClient, nil, &authimpl.NoopAuthorizer{}, ateClient, &fakeRuntimeRevisionStore{})
 
 		result, err := service.GetSubstrateSummary(ctx, "team")
 		require.NoError(t, err)
@@ -612,10 +585,7 @@ func TestGetSubstrateSummaryReadsAreIndependent(t *testing.T) {
 	})
 
 	t.Run("a database failure is an internal error, not a warning about ate-api", func(t *testing.T) {
-		service := system.NewService(
-			system.WithInventory(kubeClient, nil, &authimpl.NoopAuthorizer{}, &fakeATEClient{actors: actors, workers: workers}),
-			system.WithRuntimeRevisions(&fakeRuntimeRevisionStore{err: errors.New("connection refused")}),
-		)
+		service := system.NewService(kubeClient, nil, &authimpl.NoopAuthorizer{}, &fakeATEClient{actors: actors, workers: workers}, &fakeRuntimeRevisionStore{err: errors.New("connection refused")})
 
 		_, err := service.GetSubstrateSummary(ctx, "team")
 		assert.True(t, serviceerrors.IsCode(err, serviceerrors.CodeInternal), err)
